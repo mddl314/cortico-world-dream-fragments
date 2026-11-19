@@ -1,0 +1,95 @@
+.fragmentdream-archive {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1fr) minmax(0, 2fr);
+  gap: 1.5rem;
+}
+.fragmentdream-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+}
+.fragmentdream-list li + li {
+  margin-top: 0.35rem;
+}
+.fragmentdream-list button {
+  width: 100%;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.fragmentdream-reader {
+  padding: 0 1rem;
+}
+.fragmentdream-reader h3 {
+  margin-top: 0;
+}
+.fragmentdream-prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.fragmentdream-keywords {
+  margin: 0.75rem 0;
+}
+.fragmentdream-keywords summary {
+  width: fit-content;
+  cursor: pointer;
+}
+.fragmentdream-keywords p {
+  margin: 0.35rem 0 0.35rem 1rem;
+  overflow-wrap: anywhere;
+}
+.fragmentdream-settings {
+  max-width: 46rem;
+}
+.fragmentdream-settings fieldset {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 0.5rem;
+}
+.fragmentdream-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+.fragmentdream-field {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+  max-width: 25rem;
+}
+.fragmentdream-field[hidden] {
+  display: none;
+}
+.fragmentdream-settings fieldset > .fragmentdream-field + .fragmentdream-field {
+  margin-top: 0.75rem;
+}
+.fragmentdream-archive button[hidden] {
+  display: none;
+}
+.fragmentdream-field input,
+.fragmentdream-field select {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 15rem;
+  min-height: 2rem;
+  color: inherit;
+  font: inherit;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 0.3rem;
+  padding: 0.2rem 0.45rem;
+}
+.fragmentdream-field output,
+.fragmentdream-field small {
+  font-size: 0.85em;
+}
+@media (max-width: 640px) {
+  .fragmentdream-archive {
+    grid-template-columns: 1fr;
+  }
+  .fragmentdream-reader {
+    padding: 0;
+  }
+}

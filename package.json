@@ -1,0 +1,53 @@
+{
+  "name": "cortico-world-dream-fragments",
+  "version": "0.7.0",
+  "description": "从中文日记的重点句为 Cortico Bot 生成并单独保存碎片梦，使用本地 Ollama。 / Generate and archive fictional dreams from Chinese diary entries using local Ollama.",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "cortico-world",
+    "cortico",
+    "ollama"
+  ],
+  "files": [
+    "index.js",
+    "dream.js",
+    "diaries.js",
+    "settings.js",
+    "panel.js",
+    "panel.css",
+    "count-nouns.py",
+    "describe.json",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "cortico": {
+    "kind": "world",
+    "api": 6,
+    "displayName": "碎片梦",
+    "tags": [
+      "companion",
+      "local",
+      "external-setup",
+      "experimental",
+      "sensitive-data"
+    ],
+    "webUiClient": "panel.js",
+    "webUiStyle": "panel.css",
+    "describe": "describe.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mddl314/cortico-world-dream-fragments.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mddl314/cortico-world-dream-fragments/issues"
+  }
+}
