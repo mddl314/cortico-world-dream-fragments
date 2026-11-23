@@ -1,8 +1,9 @@
-import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { extname, isAbsolute, join, relative, sep } from 'node:path';
+import { DEFAULT_SETTINGS } from './settings.js';
 
-const PERSONAL_DIARY = '我自己的日子.md';
 const OLD_DIARY = /^日记-旧本-至(20\d{2}-\d{2}-\d{2})\.md$/u;
+const TEXT_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
 const DATED_ENTRY = /^(?:(20\d{2})[-/.年])?(\d{1,2})[-/.月](\d{1,2})日?(?=\s|[·：:]|$)/u;
 const BASELINE_DAYS = 30;
 
@@ -54,7 +55,7 @@ export function parseDiary(content, initialAnchor) {
     const heading = /^(#{1,6})\s+(.+)$/u.exec(line);
     if (heading) {
       const [, marks, title] = heading;
-      const dated = entryDate(title, anchor);
+      const dated = entryDate(title.replace(/^⚠\uFE0F?\s*/u, ''), anchor);
       if (dated) {
         finishEntry();
         anchor = dated.date;
@@ -70,6 +71,16 @@ export function parseDiary(content, initialAnchor) {
       } else if (current && marks.length <= current.level) {
         finishEntry();
       }
+      continue;
+    }
+
+    const boldHeading = /^\*\*([^*]+)\*\*\s*[：:]?\s*(.*)$/u.exec(line);
+    const boldDate = boldHeading && entryDate(boldHeading[1], anchor);
+    if (boldDate) {
+      const level = current?.level ?? 6;
+      finishEntry();
+      anchor = boldDate.date;
+      current = { date: boldDate.date, level, lines: [cleanLine(boldHeading[2])] };
       continue;
     }
 
@@ -95,22 +106,54 @@ function shiftDays(date, days) {
   return new Date(timestamp + days * 86_400_000).toISOString().slice(0, 10);
 }
 
-export async function readDiaryWindow(workspaceDir, { now = Date.now(), timezone, memoryDays }) {
-  const today = new Intl.DateTimeFormat('sv-SE', {
+export async function workspaceMemoryFiles(workspaceDir) {
+  const files = [];
+  async function walk(directory, prefix) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const name = prefix + entry.name;
+      if (entry.isDirectory()) await walk(join(directory, entry.name), name + '/');
+      else if (entry.isFile() && TEXT_EXTENSIONS.has(extname(name).toLowerCase())) files.push(name);
+    }
+  }
+  try {
+    await walk(workspaceDir, '');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  return files.sort((left, right) => left.localeCompare(right, 'zh'));
+}
+
+export async function resolveMemoryFile(workspaceDir, name) {
+  if (typeof name !== 'string' || !TEXT_EXTENSIONS.has(extname(name).toLowerCase()) ||
+      /[\\:\u0000]/u.test(name) || name.split('/').some(part => !part || part.startsWith('.'))) {
+    throw new Error('请选择 workspace 里的 Markdown 或 TXT 文件。');
+  }
+  const root = await realpath(workspaceDir);
+  const file = await realpath(join(root, name));
+  const rel = relative(root, file);
+  if (!rel || isAbsolute(rel) || rel.split(sep).some(part => part.startsWith('.'))) {
+    throw new Error('取词文件必须位于 workspace 内。');
+  }
+  const info = await stat(file);
+  if (!info.isFile()) throw new Error('取词来源必须是文件。');
+  return { file, modifiedAt: info.mtimeMs };
+}
+
+export async function readDiaryWindow(workspaceDir, { now = Date.now(), timezone, memoryDays, memoryFile = DEFAULT_SETTINGS.memoryFile }) {
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
     timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(now);
+  });
+  const today = formatter.format(now);
   const start = shiftDays(today, 1 - memoryDays);
   const baselineStart = shiftDays(start, -BASELINE_DAYS);
-  const files = await readdir(workspaceDir, { withFileTypes: true }).catch(error => {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  });
-  const diaries = files.filter(file => file.isFile() && (file.name === PERSONAL_DIARY || OLD_DIARY.test(file.name)));
-  const entries = (await Promise.all(diaries.map(async ({ name }) => {
-    const anchor = OLD_DIARY.exec(name)?.[1] ?? today;
-    const content = await readFile(join(workspaceDir, name), 'utf8');
-    return parseDiary(content, anchor);
-  }))).flat();
+  const { file, modifiedAt } = await resolveMemoryFile(workspaceDir, memoryFile);
+  const content = await readFile(file, 'utf8');
+  const entries = parseDiary(content, OLD_DIARY.exec(memoryFile.split('/').at(-1))?.[1] ?? today);
+  if (!entries.length && /\p{Script=Han}/u.test(content)) {
+    entries.push({ date: formatter.format(modifiedAt), text: content });
+  }
   const recent = [];
   const baseline = [];
   for (const entry of entries) {

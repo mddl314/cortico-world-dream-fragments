@@ -1,6 +1,6 @@
 {
   "name": "cortico-world-dream-fragments",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "从中文日记的重点句为 Cortico Bot 生成并单独保存碎片梦，使用本地 Ollama。 / Generate and archive fictional dreams from Chinese diary entries using local Ollama.",
   "license": "MIT",
   "author": "末地凋零",
@@ -18,12 +18,14 @@
     "index.js",
     "dream.js",
     "diaries.js",
+    "model.js",
     "settings.js",
     "panel.js",
     "panel.css",
     "count-nouns.py",
     "describe.json",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "assets/icon.png"
   ],
   "publishConfig": {
     "access": "public",
@@ -33,6 +35,7 @@
     "kind": "world",
     "api": 6,
     "displayName": "碎片梦",
+    "icon": "assets/icon.png",
     "tags": [
       "companion",
       "local",

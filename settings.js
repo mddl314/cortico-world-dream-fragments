@@ -12,6 +12,10 @@ export const DREAM_STYLES = [
 export const BODY_LIMIT_RANGE = { min: 50, max: 10_000 };
 
 export const DEFAULT_SETTINGS = {
+  memoryFile: '近况.md',
+  modelProvider: 'ollama',
+  apiEndpoint: '',
+  apiModel: '',
   keywordCount: 0,
   fragmentCount: 0,
   memoryDays: 3,
@@ -27,11 +31,27 @@ function integerInRange(value, min, max) {
 
 export function validateSettings(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('梦境设置无效。');
-  const { keywordCount, fragmentCount, memoryDays, bodyLimit, trigger, dailyTime, styleWeights } = value;
+  const { modelProvider = 'ollama' } = value;
+  const apiModel = typeof value.apiModel === 'string' ? value.apiModel.trim() : '';
+  let apiEndpoint = typeof value.apiEndpoint === 'string' ? value.apiEndpoint.trim() : '';
+  if (!['ollama', 'api'].includes(modelProvider)) throw new Error('请选择有效的模型来源。');
+  if (modelProvider === 'api') {
+    let url;
+    try { url = new URL(apiEndpoint); } catch { throw new Error('请填写完整的 Chat Completions 地址。'); }
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
+        url.username || url.password || url.search || url.hash || !url.pathname.endsWith('/chat/completions')) {
+      throw new Error('API 地址须以 /chat/completions 结尾，远程地址请使用 HTTPS。');
+    }
+    if (!apiModel) throw new Error('请填写 API 模型名。');
+    apiEndpoint = url.href;
+  }
+  const { memoryFile = DEFAULT_SETTINGS.memoryFile, keywordCount, fragmentCount, memoryDays, bodyLimit, trigger, dailyTime, styleWeights } = value;
+  if (typeof memoryFile !== 'string' || !memoryFile) throw new Error('请选择工作区里的取词文件。');
   if (keywordCount !== 0 && !integerInRange(keywordCount, 1, 24)) throw new Error('关键词数量须为 1～24，或填 0 自动抽一半。');
   if (fragmentCount !== 0 && !integerInRange(fragmentCount, 1, 5)) throw new Error('片段数须为 1～5，或填 0 随机生成 2～3 段。');
   if (keywordCount && keywordCount < (fragmentCount || 2)) throw new Error('关键词数量至少要够每段分到一个。');
-  if (!integerInRange(memoryDays, 1, 30)) throw new Error('近期日记范围须为 1～30 天。');
+  if (!integerInRange(memoryDays, 1, 30)) throw new Error('回看范围须为 1～30 天。');
   if (!integerInRange(bodyLimit, BODY_LIMIT_RANGE.min, BODY_LIMIT_RANGE.max)) {
     throw new Error(`正文上限须为 ${BODY_LIMIT_RANGE.min}～${BODY_LIMIT_RANGE.max} 字。`);
   }
@@ -42,7 +62,7 @@ export function validateSettings(value) {
       !styleWeights.some(weight => weight > 0)) {
     throw new Error('各风格权重须为 0～100 的整数，至少一种风格的权重大于 0。');
   }
-  return { keywordCount, fragmentCount, memoryDays, bodyLimit, trigger, dailyTime, styleWeights };
+  return { memoryFile, modelProvider, apiEndpoint, apiModel, keywordCount, fragmentCount, memoryDays, bodyLimit, trigger, dailyTime, styleWeights };
 }
 
 export function chooseStyle(weights) {

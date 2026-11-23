@@ -62,6 +62,9 @@
 .fragmentdream-field[hidden] {
   display: none;
 }
+.fragmentdream-fields[hidden] {
+  display: none;
+}
 .fragmentdream-settings fieldset > .fragmentdream-field + .fragmentdream-field {
   margin-top: 0.75rem;
 }

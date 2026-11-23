@@ -1,5 +1,8 @@
 import describe from './describe.json' with { type: 'json' };
+import { join } from 'node:path';
+import { resolveMemoryFile, workspaceMemoryFiles } from './diaries.js';
 import { generateDream, listDreams, readArchivedDream, readLatestDream } from './dream.js';
+import { apiKeyName, LOCAL_MODEL, localModelDeployment } from './model.js';
 import { BODY_LIMIT_RANGE, DEFAULT_SETTINGS, DREAM_STYLES, validateSettings } from './settings.js';
 
 const id = 'dream-fragments';
@@ -8,20 +11,27 @@ const active = new Set();
 export default {
   id,
   label: '碎片梦',
-  defaults: () => ({ enabled: false, ...DEFAULT_SETTINGS, styleWeights: [...DEFAULT_SETTINGS.styleWeights], lastScheduledDate: '' }),
+  defaults: () => ({ enabled: false, ...DEFAULT_SETTINGS, memoryFile: null, styleWeights: [...DEFAULT_SETTINGS.styleWeights], lastScheduledDate: '' }),
   describe,
-  create({ dataDir, timezone = 'Asia/Shanghai', cfg, persist }) {
+  create({ dataDir, timezone = 'Asia/Shanghai', cfg, persist, secret, storeSecret }) {
     const clock = new Intl.DateTimeFormat('sv-SE', {
       timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     });
     let timer;
     let controller;
-    const currentSettings = () => validateSettings({ ...DEFAULT_SETTINGS, ...cfg });
-    const settingsView = () => ({
+    const workspaceDir = join(dataDir, '..', 'workspace');
+    const deployment = localModelDeployment();
+    const currentSettings = () => validateSettings({
+      ...DEFAULT_SETTINGS, ...cfg,
+      memoryFile: cfg?.memoryFile ?? (cfg?.memorySource === 'diary' ? '我自己的日子.md' : DEFAULT_SETTINGS.memoryFile),
+    });
+    const settingsView = async () => ({
       settings: currentSettings(),
       bodyLimitRange: BODY_LIMIT_RANGE,
       styles: DREAM_STYLES.map(style => style.name),
+      memoryFiles: await workspaceMemoryFiles(workspaceDir),
+      localModel: LOCAL_MODEL,
       timezone,
     });
 
@@ -32,7 +42,8 @@ export default {
       controller = new AbortController();
       try {
         if (scheduledDate) persist({ lastScheduledDate: scheduledDate });
-        return await generateDream(dataDir, fetch, settings, controller.signal, timezone);
+        const apiKey = settings.modelProvider === 'api' ? secret?.(apiKeyName(settings.apiEndpoint)) : undefined;
+        return await generateDream(dataDir, fetch, settings, controller.signal, timezone, apiKey);
       } finally {
         active.delete(dataDir);
         controller = undefined;
@@ -59,6 +70,7 @@ export default {
       async stop() {
         clearInterval(timer);
         controller?.abort();
+        deployment.stop();
       },
       tools: () => [{
         ...describe.tools[0],
@@ -85,8 +97,17 @@ export default {
           if (panel === 'archive' && method === 'list') return { ...await listDreams(dataDir, args[0]), timezone };
           if (panel === 'archive' && method === 'read') return readArchivedDream(dataDir, args[0]);
           if (panel === 'settings' && method === 'get') return settingsView();
+          if (panel === 'settings' && method === 'localStatus') return deployment.status();
+          if (panel === 'settings' && method === 'deployLocal') return deployment.start();
           if (panel === 'settings' && method === 'save') {
-            persist(validateSettings(args[0]));
+            const settings = validateSettings(args[0]);
+            await resolveMemoryFile(workspaceDir, settings.memoryFile);
+            const key = args[0].apiKey;
+            if (settings.modelProvider === 'api' && typeof key === 'string' && key.trim()) {
+              if (/\s/u.test(key.trim())) throw new Error('API 密钥中不能有空白。');
+              storeSecret(apiKeyName(settings.apiEndpoint), key.trim());
+            }
+            persist(settings);
             return settingsView();
           }
           throw new Error('未知的碎片梦操作。');

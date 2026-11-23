@@ -5,9 +5,9 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readDiaryWindow } from './diaries.js';
+import { requestFragment } from './model.js';
 import { chooseStyle, DEFAULT_SETTINGS } from './settings.js';
 
-const MODEL = 'qwen2.5:1.5b';
 const FRAGMENT_ATTEMPTS = 3;
 const CANDIDATE_LIMIT = 24;
 const ARCHIVE_DIRECTORY = 'dream-fragments';
@@ -43,14 +43,14 @@ function scoreDiaryWords(diary, signal) {
   });
 }
 
-export async function rankDiaryKeywords(workspaceDir, { now, timezone, memoryDays, signal }) {
+export async function rankDiaryKeywords(workspaceDir, { now, timezone, memoryDays, memoryFile = DEFAULT_SETTINGS.memoryFile, signal }) {
   let diary;
   try {
-    diary = await readDiaryWindow(workspaceDir, { now, timezone, memoryDays });
+    diary = await readDiaryWindow(workspaceDir, { now, timezone, memoryDays, memoryFile });
   } catch (error) {
-    throw new Error('无法读取鳍鳍的日记。', { cause: error });
+    throw new Error(`无法读取取词文件「${memoryFile}」。请在「碎片梦 → 设置」重新选择。`, { cause: error });
   }
-  if (!diary.recent.length) throw new Error(`最近 ${memoryDays} 天没有可用的日记条目，可以扩大近期日记范围。`);
+  if (!diary.recent.length) throw new Error(`「${memoryFile}」最近 ${memoryDays} 天没有可用记录。可在「碎片梦 → 设置」换一个文件或扩大回看天数。`);
   signal?.throwIfAborted();
   return scoreDiaryWords({
     ...diary, exclude: [...stopWords], candidateLimit: CANDIDATE_LIMIT,
@@ -83,31 +83,7 @@ function limitFragment(text, limit) {
   return sentence && Array.from(sentence).length >= limit / 2 ? sentence : head.trimEnd() + '…';
 }
 
-async function readStreamedText(response) {
-  if (!response.body) throw new Error('本机 Ollama 没有返回梦境正文。');
-  let pending = '';
-  let text = '';
-  let done = false;
-
-  function readLine(line) {
-    if (!line.trim()) return;
-    const item = JSON.parse(line);
-    if (item.error) throw new Error('本机 Ollama 未能完成长篇梦境。');
-    text += item.message?.content ?? '';
-    if (item.done === true) done = true;
-  }
-
-  for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
-    const lines = (pending + chunk).split('\n');
-    pending = lines.pop();
-    for (const line of lines) readLine(line);
-  }
-  readLine(pending);
-  if (!done) throw new Error('本机 Ollama 的长篇输出提前中断。');
-  return text;
-}
-
-async function generateFragment(words, limit, style, request, signal) {
+async function generateFragment(words, limit, style, request, signal, settings, apiKey) {
   const prompt = [
     `写一个最多 ${limit} 字的第一人称中文梦境片段，只输出正文。`,
     `梦的风格：${style.name}。${style.direction}让这种感觉来自画面和动作，不要把风格名称写进正文。`,
@@ -116,34 +92,9 @@ async function generateFragment(words, limit, style, request, signal) {
     `意象线索：${words.join('、')}`,
   ].join('\n');
 
-  const stream = limit > 512;
-  const numPredict = stream ? limit * 2 + 64 : limit + 16;
-  // 中文字符可能占多个词元。为生成预算和提示保留完整的上下文。
-  const numCtx = stream ? 2 ** Math.ceil(Math.log2(numPredict + 512)) : 1024;
-  const timeoutMs = Math.max(120_000, 30_000 + numPredict * 150);
-
   for (let attempt = 0; attempt < FRAGMENT_ATTEMPTS; attempt += 1) {
     signal?.throwIfAborted();
-    const timeout = AbortSignal.timeout(timeoutMs);
-    let response;
-    try {
-      response = await request('http://127.0.0.1:11434/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        redirect: 'error',
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-        body: JSON.stringify({
-          model: MODEL,
-          stream,
-          messages: [{ role: 'user', content: prompt }],
-          options: { temperature: 1.15, top_p: 0.92, num_ctx: numCtx, num_predict: numPredict, seed: randomInt(2 ** 31) },
-        }),
-      });
-    } catch (error) {
-      throw new Error('连接本机 Ollama 失败或生成超时。', { cause: error });
-    }
-    if (!response.ok) throw new Error(`本机 Ollama 返回错误（${response.status}），请确认 ${MODEL} 可用。`);
-    const raw = stream ? await readStreamedText(response) : (await response.json()).message?.content;
+    const raw = await requestFragment(prompt, limit, settings, request, signal, apiKey);
     if (typeof raw !== 'string') continue;
     const text = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/\s+/g, ' ').trim();
     if (/\p{Script=Han}/u.test(text) && !OUTPUT_ARTIFACT.test(text.normalize('NFKC'))) {
@@ -212,16 +163,16 @@ export async function listDreams(dataDir, before) {
   return { dreams, next: names.length > page.length ? page.at(-1) : null };
 }
 
-export async function generateDream(dataDir, request = fetch, settings = DEFAULT_SETTINGS, signal, timezone = 'Asia/Shanghai') {
+export async function generateDream(dataDir, request = fetch, settings = DEFAULT_SETTINGS, signal, timezone = 'Asia/Shanghai', apiKey) {
   const { keywords } = await rankDiaryKeywords(join(dataDir, '..', 'workspace'), {
-    timezone, memoryDays: settings.memoryDays, signal,
+    timezone, memoryDays: settings.memoryDays, memoryFile: settings.memoryFile, signal,
   });
   const batches = sampleBatches(keywords, settings);
   const style = chooseStyle(settings.styleWeights);
   const limit = Math.floor((settings.bodyLimit - 2 * (batches.length - 1)) / batches.length);
   const fragments = [];
   for (const words of batches) {
-    fragments.push(await generateFragment(words, limit, style, request, signal));
+    fragments.push(await generateFragment(words, limit, style, request, signal, settings, apiKey));
   }
 
   const body = fragments.join('\n\n');

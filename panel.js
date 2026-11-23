@@ -133,7 +133,7 @@ function field(label, input, hint) {
   return row;
 }
 
-async function mountSettings({ root, invoke, signal }) {
+async function mountSettings({ root, invoke, signal, interval }) {
   const status = statusLine();
   status.textContent = '正在读取设置…';
   root.append(status);
@@ -145,22 +145,93 @@ async function mountSettings({ root, invoke, signal }) {
     return;
   }
   if (signal.aborted) return;
-  const { settings, bodyLimitRange, styles, timezone } = view;
+  const { settings, bodyLimitRange, styles, memoryFiles, timezone } = view;
   const form = element('form', '', 'fragmentdream-settings');
   const generation = element('fieldset');
   generation.append(element('legend', '生成'));
   const keywordCount = numberInput(settings.keywordCount, 0, 24);
   const fragmentCount = numberInput(settings.fragmentCount, 0, 5);
   const memoryDays = numberInput(settings.memoryDays, 1, 30);
+  const memoryFile = element('select');
+  memoryFile.required = true;
+  if (!memoryFiles.includes(settings.memoryFile)) {
+    const placeholder = element('option', '当前文件不可用，请重新选择');
+    placeholder.value = '';
+    placeholder.disabled = true;
+    memoryFile.append(placeholder);
+  }
+  for (const path of memoryFiles) {
+    const option = element('option', path);
+    option.value = path;
+    memoryFile.append(option);
+  }
+  memoryFile.value = memoryFiles.includes(settings.memoryFile) ? settings.memoryFile : '';
   const bodyLimit = numberInput(settings.bodyLimit, bodyLimitRange.min, bodyLimitRange.max);
   const fields = element('div', '', 'fragmentdream-fields');
   fields.append(
     field('关键词数量', keywordCount, '0 表示加权随机抽取一半，排名靠前的词更容易入选。'),
     field('片段数', fragmentCount, '0 表示随机生成两到三段。'),
-    field('近期日记（天）', memoryDays, '从这几天的重点句取词，并和此前 30 天的日记比较。'),
+    field('取词文件', memoryFile, '可选 workspace 及子文件夹中的 Markdown、TXT。无日期条目时按文件修改日计算。'),
+    field('回看天数', memoryDays, '从近期重点句取词，并和同一来源此前 30 天的条目比较。'),
     field('正文上限（字）', bodyLimit),
   );
   generation.append(fields);
+
+  const model = element('fieldset');
+  const provider = element('select');
+  for (const [value, label] of [['ollama', '本地 Ollama'], ['api', '兼容 OpenAI 的 API']]) {
+    const option = element('option', label);
+    option.value = value;
+    provider.append(option);
+  }
+  provider.value = settings.modelProvider;
+  const local = element('div');
+  const deploy = action('一键部署本地小模型');
+  const modelStatus = statusLine();
+  local.append(element('p', view.localModel), deploy, modelStatus);
+  let deploying = false;
+  function showModelStatus(result) {
+    if (signal.aborted) return;
+    deploying = result.state === 'running';
+    deploy.disabled = deploying;
+    modelStatus.textContent = result.message;
+  }
+  async function checkModel(method = 'localStatus') {
+    try {
+      showModelStatus(await invoke(method));
+    } catch (error) {
+      showModelStatus({ state: 'error', message: error.message });
+    }
+  }
+  deploy.addEventListener('click', () => {
+    deploy.disabled = true;
+    void checkModel('deployLocal');
+  }, { signal });
+  interval(() => { if (deploying) void checkModel(); }, 1500);
+  const remote = element('div', '', 'fragmentdream-fields');
+  const endpoint = element('input');
+  Object.assign(endpoint, { type: 'url', value: settings.apiEndpoint, placeholder: 'https://example.com/v1/chat/completions' });
+  const modelName = element('input');
+  modelName.value = settings.apiModel;
+  const apiKey = element('input');
+  Object.assign(apiKey, { type: 'password', autocomplete: 'new-password' });
+  remote.append(
+    field('API 地址', endpoint),
+    field('模型名', modelName),
+    field('API 密钥', apiKey, '留空沿用该地址已保存的密钥。'),
+    element('p', '使用 API 时，选出的关键词会发给所填的服务。'),
+  );
+  function updateProvider() {
+    const useApi = provider.value === 'api';
+    local.hidden = useApi;
+    remote.hidden = !useApi;
+    endpoint.disabled = modelName.disabled = apiKey.disabled = !useApi;
+    endpoint.required = modelName.required = useApi;
+    if (!useApi) void checkModel();
+  }
+  provider.addEventListener('change', updateProvider, { signal });
+  model.append(element('legend', '模型'), field('模型来源', provider), local, remote);
+  updateProvider();
 
   const distribution = element('fieldset');
   const count = element('p');
@@ -206,7 +277,7 @@ async function mountSettings({ root, invoke, signal }) {
 
   const save = action('保存设置');
   save.type = 'submit';
-  form.append(generation, distribution, schedule, save, status);
+  form.append(generation, model, distribution, schedule, save, status);
   root.append(form);
   status.textContent = '';
   form.addEventListener('submit', async event => {
@@ -218,11 +289,17 @@ async function mountSettings({ root, invoke, signal }) {
         keywordCount: Number(keywordCount.value),
         fragmentCount: Number(fragmentCount.value),
         memoryDays: Number(memoryDays.value),
+        memoryFile: memoryFile.value,
+        modelProvider: provider.value,
+        apiEndpoint: endpoint.value,
+        apiModel: modelName.value,
+        apiKey: apiKey.value,
         bodyLimit: Number(bodyLimit.value),
         styleWeights: weights.map(({ input }) => Number(input.value)),
         trigger: trigger.value,
         dailyTime: dailyTime.value,
       }]);
+      apiKey.value = '';
       if (!signal.aborted) status.textContent = '已保存，下次做梦生效。';
     } catch (error) {
       if (!signal.aborted) status.textContent = error.message;
